@@ -19,6 +19,7 @@ docker compose up -d --build && sleep 5 && curl.exe -X POST http://localhost:800
 
 # 3. Развёртывание в Kubernetes (kind) и проверка работоспособности
 kind create cluster --name mlpro-cluster --image kindest/node:v1.30.2 && docker build -t toxic-service:latest . && kind load docker-image toxic-service:latest --name mlpro-cluster && kubectl apply -f k8s/ && kubectl rollout status deployment/toxic-service --timeout=90s
+```
 
 ## 2. Доказательства работоспособности 
 
