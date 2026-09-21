@@ -105,5 +105,6 @@ deployment.apps/toxic-service
 REVISION  CHANGE-CAUSE
 1         <none>
 2         kubectl set image deploy/toxic-service toxic-service=toxic-service:1.1
+```
 
 **Вывод:** при обновлении образа через kubectl set image стратегия RollingUpdate последовательно создаёт новый под, ожидает прохождения readinessProbe, и только затем гасит старую реплику. При kubectl rollout undo происходит мгновенный возврат к предыдущей ревизии без простоя сервиса.
