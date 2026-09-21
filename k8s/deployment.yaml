@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toxic-service
+  labels:
+    app: toxic-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: toxic-service
+  template:
+    metadata:
+      labels:
+        app: toxic-service
+    spec:
+      containers:
+        - name: toxic-service
+          image: toxic-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              value: "" # Без Postgres сервис запускается и отдает скоры без логирования
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            failureThreshold: 10
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 2
+            periodSeconds: 3
