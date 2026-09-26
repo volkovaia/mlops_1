@@ -24,7 +24,7 @@ spec:
             - configMapRef:
                 name: toxic-config
             - secretRef:
-                name: toxic-secret
+                name: toxic-secret-broken
           resources:
             requests:
               cpu: "100m"
