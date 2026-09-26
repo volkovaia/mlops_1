@@ -3,4 +3,4 @@ kind: ConfigMap
 metadata:
   name: toxic-config
 data:
-  MODEL_PATH: "/app/models/model.joblib"
+  MODEL_PATH: "/app/models/non_existent_model.joblib"
