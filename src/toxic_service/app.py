@@ -1,10 +1,14 @@
+# src/toxic_service/app.py
+import json
 import time
 import uuid
 from contextlib import asynccontextmanager
 import joblib
-import pandas as pd
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
+from starlette.middleware.base import BaseHTTPMiddleware
+
 from toxic_service.db import db
+from toxic_service.features import transform_texts_to_df
 from toxic_service.schemas import (
     PredictRequest,
     PredictResponse,
@@ -15,25 +19,12 @@ from toxic_service.schemas import (
 MODEL_PATH = "models/model.joblib"
 model_bundle = {}
 
-NUMERIC_COLS = ["caps_ratio", "exclaim_count", "bad_word_count"]
-
-def prepare_dataframe(rows: list[dict]) -> pd.DataFrame:
-    """Преобразует входные словари в DataFrame и безопасно обрабатывает None/NaN."""
-    df = pd.DataFrame(rows)
-    for col in NUMERIC_COLS:
-        if col in df.columns:
-            # Превращаем None в NaN, а затем в 0.0 нужного типа float
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-        else:
-            df[col] = 0.0
-    return df
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global model_bundle
     try:
         model_bundle = joblib.load(MODEL_PATH)
-    except Exception as e:
+    except Exception:
         model_bundle = {}
     
     await db.connect()
@@ -45,6 +36,41 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# логирование в Postgres через Middleware
+@app.middleware("http")
+async def log_predictions_middleware(request: Request, call_next):
+    # Логируем только обращения к predict
+    if not request.url.path.startswith("/v1/predict"):
+        return await call_next(request)
+
+    start_time = time.perf_counter()
+    request_id = str(uuid.uuid4())
+    
+    # Клонируем тело запроса для логирования
+    body_bytes = await request.body()
+    try:
+        features_json = json.loads(body_bytes.decode("utf-8"))
+    except Exception:
+        features_json = {"raw_body": body_bytes.decode("utf-8", errors="ignore")}
+
+    # передача управления FastAPI (здесь может произойти 422 или 200)
+    response: Response = await call_next(request)
+    
+    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    model_version = model_bundle.get("metadata", {}).get("model_version", "1.0.0")
+
+    # В базу реальный статус-код 
+    await db.log_prediction(
+        request_id=request_id,
+        model_version=model_version,
+        features=features_json,
+        prediction={"status": "handled"},
+        latency_ms=latency_ms,
+        status_code=response.status_code
+    )
+
+    return response
 
 @app.get("/health", status_code=status.HTTP_200_OK)
 async def health():
@@ -70,16 +96,14 @@ async def predict(payload: PredictRequest):
     pipeline = model_bundle["pipeline"]
     metadata = model_bundle["metadata"]
 
-    raw_data = payload.model_dump()
-    # Безопасная подготовка признаков с обработкой пропусков
-    df = prepare_dataframe([raw_data])
+    # Сервис сам считает мета-фичи из текста
+    df = transform_texts_to_df([payload.comment_text])
 
     prob = float(pipeline.predict_proba(df)[0, 1])
     is_toxic = bool(prob >= metadata["threshold"])
-
     latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-    response_data = {
+    return {
         "is_toxic": is_toxic,
         "probability": round(prob, 4),
         "model_version": metadata["model_version"],
@@ -87,19 +111,6 @@ async def predict(payload: PredictRequest):
         "latency_ms": latency_ms
     }
 
-    # Логируем в БД (если база подключена)
-    await db.log_prediction(
-        request_id=request_id,
-        model_version=metadata["model_version"],
-        features=raw_data,
-        prediction={"is_toxic": is_toxic, "probability": prob},
-        latency_ms=latency_ms,
-        status_code=status.HTTP_200_OK
-    )
-
-    return response_data
-
-# Батч-эндпоинт (Звёздочка 2)
 @app.post("/v1/predict/batch", response_model=BatchPredictResponse, status_code=status.HTTP_200_OK)
 async def predict_batch(payload: BatchPredictRequest):
     start_time = time.perf_counter()
@@ -111,13 +122,12 @@ async def predict_batch(payload: BatchPredictRequest):
     pipeline = model_bundle["pipeline"]
     metadata = model_bundle["metadata"]
 
-    rows_data = [row.model_dump() for row in payload.rows]
-    df = prepare_dataframe(rows_data)
+    texts = [row.comment_text for row in payload.rows]
+    df = transform_texts_to_df(texts)
 
     probs = pipeline.predict_proba(df)[:, 1]
     predictions = (probs >= metadata["threshold"]).tolist()
     probabilities = [round(float(p), 4) for p in probs]
-
     latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
     return {

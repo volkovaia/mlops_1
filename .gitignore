@@ -1,3 +1,23 @@
+# Байткод Python
+__pycache__/
+*.py[cod]
+*$py.class
 
+# Окружение и тесты
+.venv/
+.pytest_cache/
+
+# Бинарники и архивы
 *.exe
 *.zip
+*.tar.gz
+
+# База данных и локальные логи
+pgdata/
+run*.csv
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -15,7 +15,7 @@ Production-ready ML-сервис на базе **FastAPI**, **scikit-learn** и 
 uv run pytest -v
 
 # 2. Поднятие сервиса и Postgres, отправка запроса и проверка SELECT из базы
-docker compose up -d --build && sleep 5 && curl.exe -X POST http://localhost:8000/v1/predict -H "Content-Type: application/json" -d "{\"comment_text\":\"Thank you for helping!\",\"caps_ratio\":0.0,\"exclaim_count\":1,\"bad_word_count\":0}" && docker compose exec postgres psql -U postgres -d toxic_db -c "SELECT request_id, model_version, status_code, latency_ms, prediction FROM prediction_logs;" && docker compose down
+docker compose up -d --build && sleep 5 && curl -X POST http://localhost:8000/v1/predict -H "Content-Type: application/json" -d "{\"comment_text\":\"Thank you for helping!\"}" && docker compose exec postgres psql -U postgres -d toxic_db -c "SELECT request_id, model_version, status_code, latency_ms, prediction FROM prediction_logs;" && docker compose down
 
 # 3. Развёртывание в Kubernetes (kind) и проверка работоспособности
 kind create cluster --name mlpro-cluster --image kindest/node:v1.30.2 && docker build -t toxic-service:latest . && kind load docker-image toxic-service:latest --name mlpro-cluster && kubectl apply -f k8s/ && kubectl rollout status deployment/toxic-service --timeout=90s
