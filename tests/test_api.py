@@ -1,6 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
+
 from toxic_service.app import app
+
 
 @pytest.fixture(scope="module")
 def client():
@@ -10,7 +12,9 @@ def client():
 def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "model_path" in data  # проверяем, что настройка видна снаружи
 
 def test_ready_check(client):
     response = client.get("/ready")

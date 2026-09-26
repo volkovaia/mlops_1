@@ -1,22 +1,24 @@
 # src/toxic_service/app.py
 import json
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+
 import joblib
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from toxic_service.db import db
 from toxic_service.features import transform_texts_to_df
 from toxic_service.schemas import (
+    BatchPredictRequest,
+    BatchPredictResponse,
     PredictRequest,
     PredictResponse,
-    BatchPredictRequest,
-    BatchPredictResponse
 )
 
-MODEL_PATH = "models/model.joblib"
+# читаем путь к модели из переменной окружения (из ConfigMap)
+MODEL_PATH = os.getenv("MODEL_PATH", "models/model.joblib")
 model_bundle = {}
 
 @asynccontextmanager
@@ -37,30 +39,25 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# логирование в Postgres через Middleware
 @app.middleware("http")
 async def log_predictions_middleware(request: Request, call_next):
-    # Логируем только обращения к predict
     if not request.url.path.startswith("/v1/predict"):
         return await call_next(request)
 
     start_time = time.perf_counter()
     request_id = str(uuid.uuid4())
     
-    # Клонируем тело запроса для логирования
     body_bytes = await request.body()
     try:
         features_json = json.loads(body_bytes.decode("utf-8"))
     except Exception:
         features_json = {"raw_body": body_bytes.decode("utf-8", errors="ignore")}
 
-    # передача управления FastAPI (здесь может произойти 422 или 200)
     response: Response = await call_next(request)
     
     latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
     model_version = model_bundle.get("metadata", {}).get("model_version", "1.0.0")
 
-    # В базу реальный статус-код 
     await db.log_prediction(
         request_id=request_id,
         model_version=model_version,
@@ -72,9 +69,13 @@ async def log_predictions_middleware(request: Request, call_next):
 
     return response
 
+# /health возвращает настройку, пришедшую из ConfigMap
 @app.get("/health", status_code=status.HTTP_200_OK)
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "model_path": MODEL_PATH
+    }
 
 @app.get("/ready", status_code=status.HTTP_200_OK)
 async def ready():
@@ -96,9 +97,7 @@ async def predict(payload: PredictRequest):
     pipeline = model_bundle["pipeline"]
     metadata = model_bundle["metadata"]
 
-    # Сервис сам считает мета-фичи из текста
     df = transform_texts_to_df([payload.comment_text])
-
     prob = float(pipeline.predict_proba(df)[0, 1])
     is_toxic = bool(prob >= metadata["threshold"])
     latency_ms = round((time.perf_counter() - start_time) * 1000, 2)

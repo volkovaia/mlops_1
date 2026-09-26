@@ -1,4 +1,5 @@
-from locust import HttpUser, task, between
+from locust import HttpUser, between, task
+
 
 class ToxicModelUser(HttpUser):
     wait_time = between(0.1, 0.5)

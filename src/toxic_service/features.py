@@ -1,6 +1,7 @@
 # src/toxic_service/features.py
 import re
-from typing import Dict, Any, List
+from typing import Any
+
 import pandas as pd
 
 BAD_WORDS = {
@@ -8,7 +9,7 @@ BAD_WORDS = {
     "trash", "hell", "hate", "ugly", "shit", "fuck", "bitch", "bastard"
 }
 
-def extract_meta_features(text: str) -> Dict[str, Any]:
+def extract_meta_features(text: str) -> dict[str, Any]:
     clean_text = text if isinstance(text, str) else ""
     total_chars = max(len(clean_text), 1)
     
@@ -26,6 +27,6 @@ def extract_meta_features(text: str) -> Dict[str, Any]:
         "bad_word_count": bad_word_count,
     }
 
-def transform_texts_to_df(texts: List[str]) -> pd.DataFrame:
+def transform_texts_to_df(texts: list[str]) -> pd.DataFrame:
     rows = [extract_meta_features(t) for t in texts]
     return pd.DataFrame(rows)

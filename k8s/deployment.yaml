@@ -16,13 +16,15 @@ spec:
     spec:
       containers:
         - name: toxic-service
-          image: toxic-service:latest
+          image: IMAGE_PLACEHOLDER
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
-          env:
-            - name: DATABASE_URL
-              value: "" # Без Postgres сервис запускается и отдает скоры без логирования
+          envFrom:
+            - configMapRef:
+                name: toxic-config
+            - secretRef:
+                name: toxic-secret
           resources:
             requests:
               cpu: "100m"
