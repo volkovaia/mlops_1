@@ -1,0 +1,170 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # job 1: тесты и листинг (бегут на любой ветке и в PR)
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: toxic_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run linter (ruff)
+        run: uv run ruff check .
+
+      - name: Run unit & integration tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5432/toxic_db
+        run: uv run pytest -v
+
+  # job 2: сборка и пуш образав ghcr (только при пуше в main)
+  build:
+    needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Downcase repository name for GHCR
+        run: |
+          echo "IMAGE_NAME=ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]' >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # job 3: развёртывание в kind и smoke тест (только в main)
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Downcase repository name for GHCR
+        run: |
+          echo "IMAGE_NAME=ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]' >> $GITHUB_ENV
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          node_image: kindest/node:v1.30.2
+          cluster_name: kind-ci
+
+      - name: Set up GHCR pull secret in cluster
+        run: |
+          kubectl create secret docker-registry ghcr-auth \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }}
+          kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "ghcr-auth"}]}'
+
+      - name: Prepare manifests with dynamic values
+        run: |
+          # 1. Подставляем реальный тег собранного образа
+          sed -i "s|IMAGE_PLACEHOLDER|${{ env.IMAGE_NAME }}:${{ github.sha }}|g" k8s/deployment.yaml
+
+          # 2. Подставляем пароль базы через GitHub Secret (с дефолтным fallback)
+          DB_PASS="${{ secrets.DB_PASSWORD || 'postgrespassword' }}"
+          sed -i "s|postgres:postgres|postgres:${DB_PASS}|g" k8s/secret.yaml
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/secret.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/deployment.yaml
+
+      - name: Wait for deployment rollout
+        run: |
+          kubectl rollout status deployment/toxic-service --timeout=120s
+
+      - name: Run Smoke Test with semantic assertion
+        run: |
+          # Запускаем проброс порта в фоне
+          kubectl port-forward svc/toxic-service 8080:8000 &
+          sleep 4
+
+          # 1. Проверяем health и отображение настройки из ConfigMap
+          echo "Checking /health endpoint..."
+          curl --fail -s http://localhost:8080/health \
+            | python3 -c "import json, sys; r = json.load(sys.stdin); assert r['status'] == 'ok' and 'model_path' in r, r; print('Health check PASSED:', r)"
+
+          # 2. Создаем файл запроса good.json
+          cat << 'EOF' > good.json
+          {"comment_text": "This is a great and helpful neutral comment"}
+          EOF
+
+          # 3. Смысловой smoke-тест (вероятность в диапазоне [0, 1])
+          echo "Checking /v1/predict with semantic score check..."
+          curl --fail -s -X POST http://localhost:8080/v1/predict \
+            -H "Content-Type: application/json" \
+            -d @good.json \
+            | python3 -c "import json, sys; r = json.load(sys.stdin); assert 0.0 <= r['probability'] <= 1.0, r; assert isinstance(r['is_toxic'], bool), r; print('Smoke predict check PASSED:', r)"
+
+      # Шаг расширенной диагностики при любых сбоях
+      - name: Rich diagnostics on failure
+        if: failure()
+        run: |
+          echo "KUBECTL GET ALL"
+          kubectl get all -o wide
+          echo "DESCRIBE PODS"
+          kubectl describe pods
+          echo "CONTAINER LOGS"
+          kubectl logs -l app=toxic-service --all-containers --tail=100
+          echo "CLUSTER EVENTS"
+          kubectl get events --sort-by='.metadata.creationTimestamp'

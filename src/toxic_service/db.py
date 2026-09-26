@@ -1,7 +1,9 @@
+# src/toxic_service/db.py
 import json
 import logging
 import os
-from typing import Optional, Any
+from typing import Any
+
 import asyncpg
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
 
 class Database:
     def __init__(self):
-        self.pool: Optional[asyncpg.Pool] = None
+        self.pool: asyncpg.Pool | None = None
         self.db_url = os.getenv("DATABASE_URL")
 
     async def connect(self):
@@ -31,7 +33,9 @@ class Database:
 
         try:
             self.pool = await asyncpg.create_pool(dsn=self.db_url, min_size=1, max_size=10)
-            async with self.pool.acquire() as conn:
+            async with self.pool.acquire() as conn, conn.transaction():
+                # Блокировка от гонки реплик при одновременном старте
+                await conn.execute("SELECT pg_advisory_xact_lock(42);")
                 await conn.execute(CREATE_TABLE_SQL)
             logger.info("Successfully connected to Postgres and initialized tables.")
         except Exception as e:

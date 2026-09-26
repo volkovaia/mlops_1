@@ -1,5 +1,8 @@
 # scripts/train.py
 import os
+import sys
+from pathlib import Path
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -12,9 +15,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
 from toxic_service.features import transform_texts_to_df
-import sys
-from pathlib import Path
-
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 

@@ -1,5 +1,6 @@
-from typing import List
-from pydantic import BaseModel, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
+
 
 class PredictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -20,11 +21,11 @@ class PredictResponse(BaseModel):
 
 class BatchPredictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    rows: List[PredictRequest] = Field(..., min_length=1, max_length=1000)
+    rows: list[PredictRequest] = Field(..., min_length=1, max_length=1000)
 
 class BatchPredictResponse(BaseModel):
-    predictions: List[bool]
-    probabilities: List[float]
+    predictions: list[bool]
+    probabilities: list[float]
     model_version: str
     request_id: str
     latency_ms: float
