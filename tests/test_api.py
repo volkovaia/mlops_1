@@ -9,20 +9,13 @@ def client():
     with TestClient(app) as test_client:
         yield test_client
 
-# def test_health_check(client):
-#     response = client.get("/health")
-#     assert response.status_code == 200
-#     data = response.json()
-#     assert data["status"] == "ok"
-#     assert "model_path" in data  # проверяем, что настройка видна снаружи
-
 def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
-    # для демонстрации красного pr
-    assert data["status"] == "broken_for_pr_demo"
-    assert "model_path" in data
+    assert data["status"] == "ok"
+    assert "model_path" in data  # проверяем, что настройка видна снаружи
+
 
 def test_ready_check(client):
     response = client.get("/ready")
