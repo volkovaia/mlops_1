@@ -28,10 +28,10 @@ spec:
           resources:
             requests:
               cpu: "100m"
-              memory: "1000000000Mi"
+              memory: "100Mi"
             limits:
               cpu: "500m"
-              memory: "1000000000Mi"
+              memory: "384Mi"
           startupProbe:
             httpGet:
               path: /ready
