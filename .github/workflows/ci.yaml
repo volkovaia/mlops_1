@@ -134,34 +134,32 @@ jobs:
           kubectl rollout status deployment/toxic-service --timeout=240s
 
       - name: Run Smoke Test via Ingress
-        run: |
-          sleep 5
-          CONTROL_PLANE_IP=$(getent hosts mlpro-cluster-control-plane | awk '{print $1}')
-          echo "Connecting to Traefik Ingress at $CONTROL_PLANE_IP"
+              run: |
+                sleep 5
 
-          echo "1. Checking /health (model version from registry)..."
-          curl --fail -s -H "Host: toxic.localhost" http://$CONTROL_PLANE_IP/health \
-            | python3 -c "import json, sys; r = json.load(sys.stdin); assert r['status'] == 'ok' and r['model_version'] != 'local', r; print('Health check PASSED:', r)"
+                echo "1. Checking /health (model version from registry)..."
+                curl --fail -sS -H "Host: toxic.localhost" http://mlpro-cluster-control-plane/health \
+                  | python3 -c "import json, sys; r = json.load(sys.stdin); assert r['status'] == 'ok' and r['model_version'] != 'local', r; print('Health check PASSED:', r)"
 
-          echo "2. Checking /v1/predict with semantic assertion"
-          cat << 'EOF' > good.json
-          {"comment_text": "This is a great and helpful neutral comment"}
-          EOF
+                echo "2. Checking /v1/predict with semantic assertion..."
+                cat << 'EOF' > good.json
+                {"comment_text": "This is a great and helpful neutral comment"}
+                EOF
 
-          PRED_RESP=$(curl --fail -s -X POST http://$CONTROL_PLANE_IP/v1/predict \
-            -H "Host: toxic.localhost" \
-            -H "Content-Type: application/json" \
-            -d @good.json)
-          echo "Predict response: $PRED_RESP"
-          
-          REQ_ID=$(echo "$PRED_RESP" | python3 -c "import json, sys; r = json.load(sys.stdin); assert 0.0 <= r['probability'] <= 1.0; print(r['request_id'])")
+                PRED_RESP=$(curl --fail -sS -X POST http://mlpro-cluster-control-plane/v1/predict \
+                  -H "Host: toxic.localhost" \
+                  -H "Content-Type: application/json" \
+                  -d @good.json)
+                echo "Predict response: $PRED_RESP"
+                
+                REQ_ID=$(echo "$PRED_RESP" | python3 -c "import json, sys; r = json.load(sys.stdin); assert 0.0 <= r['probability'] <= 1.0; print(r['request_id'])")
 
-          sleep 2
-          echo "3. Verifying record in Postgres logs table for request_id $REQ_ID"
-          kubectl exec deploy/postgres -- psql -U postgres -d toxic_db -c \
-            "SELECT request_id, status_code, latency_ms, prediction FROM prediction_logs WHERE request_id = '$REQ_ID';" \
-            | grep "$REQ_ID"
-          echo "Smoke test PASSED on all 3 conditions!"
+                sleep 2
+                echo "3. Verifying record in Postgres logs table for request_id $REQ_ID..."
+                kubectl exec deploy/postgres -- psql -U postgres -d toxic_db -c \
+                  "SELECT request_id, status_code, latency_ms, prediction FROM prediction_logs WHERE request_id = '$REQ_ID';" \
+                  | grep "$REQ_ID"
+                echo "Smoke test PASSED on all 3 conditions!"
 
       - name: Rich diagnostics on failure
         if: failure()
