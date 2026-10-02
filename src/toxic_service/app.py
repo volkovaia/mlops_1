@@ -4,10 +4,11 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+
 import joblib
 import mlflow
-from mlflow.tracking import MlflowClient
 from fastapi import FastAPI, HTTPException, Request, Response, status
+from mlflow.tracking import MlflowClient
 
 from toxic_service.db import db
 from toxic_service.features import transform_texts_to_df
@@ -22,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAME = os.getenv("MODEL_NAME")
 MODEL_ALIAS = os.getenv("MODEL_ALIAS", "champion")
-MLFLOW_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow.mlflow.svc.cluster.local:5000")
+MLFLOW_URI = os.getenv(
+    "MLFLOW_TRACKING_URI", "http://mlflow.mlflow.svc.cluster.local:5000"
+)
 LOCAL_MODEL_PATH = os.getenv("MODEL_PATH", "models/model.joblib")
 
 model_pipeline = None
@@ -35,15 +38,19 @@ async def lifespan(app: FastAPI):
     global model_pipeline, model_metadata, current_model_version
 
     if MODEL_NAME:
-        logger.info(f"Loading model '{MODEL_NAME}@{MODEL_ALIAS}' from MLflow at {MLFLOW_URI}...")
+        logger.info(
+            f"Loading model '{MODEL_NAME}@{MODEL_ALIAS}' from MLflow at {MLFLOW_URI}..."
+        )
         try:
             mlflow.set_tracking_uri(MLFLOW_URI)
             client = MlflowClient(tracking_uri=MLFLOW_URI)
-            
+
             # Получаем версию по алиасу
             model_ver_info = client.get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)
             current_model_version = f"v{model_ver_info.version}"
-            logger.info(f"Resolved alias '{MODEL_ALIAS}' to version {current_model_version}")
+            logger.info(
+                f"Resolved alias '{MODEL_ALIAS}' to version {current_model_version}"
+            )
 
             # Загружаем модель напрямую по стандартному URI MLflow
             model_uri = f"models:/{MODEL_NAME}@{MODEL_ALIAS}"
@@ -52,17 +59,26 @@ async def lifespan(app: FastAPI):
             # Получаем порог из run
             run = client.get_run(model_ver_info.run_id)
             threshold = float(run.data.params.get("threshold", 0.5))
-            model_metadata = {"threshold": threshold, "model_version": current_model_version}
-            logger.info(f"Successfully loaded {MODEL_NAME} {current_model_version} with threshold {threshold}")
+            model_metadata = {
+                "threshold": threshold,
+                "model_version": current_model_version,
+            }
+            logger.info(
+                f"Successfully loaded {MODEL_NAME} {current_model_version} with threshold {threshold}"
+            )
         except Exception as e:
             logger.error(f"Failed to load model from MLflow: {e}")
             model_pipeline = None
     else:
-        logger.info(f"MODEL_NAME not set. Falling back to local file {LOCAL_MODEL_PATH}...")
+        logger.info(
+            f"MODEL_NAME not set. Falling back to local file {LOCAL_MODEL_PATH}..."
+        )
         try:
             bundle = joblib.load(LOCAL_MODEL_PATH)
             model_pipeline = bundle.get("pipeline")
-            model_metadata = bundle.get("metadata", {"threshold": 0.5, "model_version": "local"})
+            model_metadata = bundle.get(
+                "metadata", {"threshold": 0.5, "model_version": "local"}
+            )
             current_model_version = model_metadata.get("model_version", "local")
             logger.info(f"Loaded local model {current_model_version}")
         except Exception as e:
@@ -166,7 +182,11 @@ async def predict(payload: PredictRequest, request: Request):
     }
 
 
-@app.post("/v1/predict/batch", response_model=BatchPredictResponse, status_code=status.HTTP_200_OK)
+@app.post(
+    "/v1/predict/batch",
+    response_model=BatchPredictResponse,
+    status_code=status.HTTP_200_OK,
+)
 async def predict_batch(payload: BatchPredictRequest, request: Request):
     start_time = time.perf_counter()
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))

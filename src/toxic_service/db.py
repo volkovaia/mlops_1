@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
 );
 """
 
+
 class Database:
     def __init__(self):
         self.pool: asyncpg.Pool | None = None
@@ -32,7 +33,9 @@ class Database:
             return
 
         try:
-            self.pool = await asyncpg.create_pool(dsn=self.db_url, min_size=1, max_size=10)
+            self.pool = await asyncpg.create_pool(
+                dsn=self.db_url, min_size=1, max_size=10
+            )
             async with self.pool.acquire() as conn, conn.transaction():
                 # Блокировка от гонки реплик при одновременном старте
                 await conn.execute("SELECT pg_advisory_xact_lock(42);")
@@ -54,7 +57,7 @@ class Database:
         features: Any,
         prediction: Any,
         latency_ms: float,
-        status_code: int = 200
+        status_code: int = 200,
     ):
         if not self.pool:
             return
@@ -73,9 +76,10 @@ class Database:
                     json.dumps(features),
                     json.dumps(prediction),
                     latency_ms,
-                    status_code
+                    status_code,
                 )
         except Exception as e:
             logger.error(f"Failed to write prediction log: {e}")
+
 
 db = Database()

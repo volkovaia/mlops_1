@@ -8,7 +8,10 @@ from toxic_service.app import app
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-@pytest.mark.skipif(not DATABASE_URL, reason="DATABASE_URL is not set (running unit tests)")
+
+@pytest.mark.skipif(
+    not DATABASE_URL, reason="DATABASE_URL is not set (running unit tests)"
+)
 def test_db_logging_integration():
     """Проверка запись в БД успешного запроса (200) и запроса с ошибкой валидации (422)."""
     with TestClient(app) as client:
@@ -24,6 +27,7 @@ def test_db_logging_integration():
 
     # Подключаемся напрямую к Postgres и проверяем сохраненные строки
     import asyncio
+
     async def verify_records():
         conn = await asyncpg.connect(DATABASE_URL)
         try:
