@@ -91,6 +91,7 @@ jobs:
       packages: read
     env:
       IMAGE_NAME: ghcr.io/${{ github.repository }}
+      KIND_CLUSTER: wrong-cluster
 
     steps:
       - name: Checkout repository
@@ -107,8 +108,8 @@ jobs:
 
       - name: Deploy Postgres in cluster
         run: |
-          kubectl apply -f k8s/postgres.yaml
-          kubectl rollout status deployment/postgres --timeout=90s
+          kubectl --context "kind-${KIND_CLUSTER}" apply -f k8s/postgres.yaml
+          kubectl --context "kind-${KIND_CLUSTER}" rollout status deployment/postgres --timeout=90s
 
       - name: Create or update Secret safely
         run: |
