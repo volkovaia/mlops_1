@@ -91,7 +91,7 @@ jobs:
       packages: read
     env:
       IMAGE_NAME: ghcr.io/${{ github.repository }}
-      KIND_CLUSTER: wrong-cluster
+      KIND_CLUSTER: mlpro-cluster 
 
     steps:
       - name: Checkout repository
