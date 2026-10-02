@@ -82,17 +82,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+
   deploy:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, kind]
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Downcase repository name for GHCR
+      - name: Set up GHCR pull secret in cluster
         run: |
-          echo "IMAGE_NAME=ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]' >> $GITHUB_ENV
+          kubectl create secret docker-registry ghcr-auth \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "ghcr-auth"}]}'
 
       - name: Deploy Postgres in cluster
         run: |
@@ -124,14 +136,12 @@ jobs:
       - name: Run Smoke Test via Ingress
         run: |
           sleep 5
-          # Определяем IP-адрес узла control-plane в сети kind
           CONTROL_PLANE_IP=$(getent hosts mlpro-cluster-control-plane | awk '{print $1}')
-          echo "Connecting to Traefik Ingress at $CONTROL_PLANE_IP..."
+          echo "Connecting to Traefik Ingress at $CONTROL_PLANE_IP"
 
-          echo "1. Checking /health (model version from registry)"
-          HEALTH_RESP=$(curl --fail -s -H "Host: toxic.localhost" http://$CONTROL_PLANE_IP/health)
-          echo "Health response: $HEALTH_RESP"
-          python3 -c "import json; r = json.loads('$HEALTH_RESP'); assert r['status'] == 'ok' and r['model_version'] != 'local', r; print('Health check PASSED!')"
+          echo "1. Checking /health (model version from registry)..."
+          curl --fail -s -H "Host: toxic.localhost" http://$CONTROL_PLANE_IP/health \
+            | python3 -c "import json, sys; r = json.load(sys.stdin); assert r['status'] == 'ok' and r['model_version'] != 'local', r; print('Health check PASSED:', r)"
 
           echo "2. Checking /v1/predict with semantic assertion"
           cat << 'EOF' > good.json
@@ -144,10 +154,10 @@ jobs:
             -d @good.json)
           echo "Predict response: $PRED_RESP"
           
-          REQ_ID=$(python3 -c "import json; r = json.loads('$PRED_RESP'); assert 0.0 <= r['probability'] <= 1.0; print(r['request_id'])")
+          REQ_ID=$(echo "$PRED_RESP" | python3 -c "import json, sys; r = json.load(sys.stdin); assert 0.0 <= r['probability'] <= 1.0; print(r['request_id'])")
 
           sleep 2
-          echo "3. Verifying record in Postgres logs table for request_id $REQ_ID..."
+          echo "3. Verifying record in Postgres logs table for request_id $REQ_ID"
           kubectl exec deploy/postgres -- psql -U postgres -d toxic_db -c \
             "SELECT request_id, status_code, latency_ms, prediction FROM prediction_logs WHERE request_id = '$REQ_ID';" \
             | grep "$REQ_ID"
