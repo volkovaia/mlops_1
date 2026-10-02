@@ -4,5 +4,5 @@ metadata:
   name: toxic-config
 data:
   MODEL_NAME: "toxic-comment-clf"
-  MODEL_ALIAS: "champion"
+  MODEL_ALIAS: "prod"
   MLFLOW_TRACKING_URI: "http://mlflow.mlflow.svc.cluster.local:5000"
