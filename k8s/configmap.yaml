@@ -3,4 +3,6 @@ kind: ConfigMap
 metadata:
   name: toxic-config
 data:
-  MODEL_PATH: "/app/models/model.joblib"
+  MODEL_NAME: "toxic-comment-clf"
+  MODEL_ALIAS: "champion"
+  MLFLOW_TRACKING_URI: "http://mlflow.mlflow.svc.cluster.local:5000"

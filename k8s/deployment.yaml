@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: toxic-service
-          image: IMAGE_PLACEHOLDER
+          image: toxic-service:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
