@@ -85,82 +85,80 @@ jobs:
   deploy:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    env:
-      IMAGE_NAME: ghcr.io/${{ github.repository }}
+    runs-on: [self-hosted, kind]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create kind cluster
-        uses: helm/kind-action@v1.10.0
-        with:
-          node_image: kindest/node:v1.30.2
-          cluster_name: kind-ci
-
-      - name: Set up GHCR pull secret in cluster
+      - name: Downcase repository name for GHCR
         run: |
-          kubectl create secret docker-registry ghcr-auth \
-            --docker-server=ghcr.io \
-            --docker-username=${{ github.actor }} \
-            --docker-password=${{ secrets.GITHUB_TOKEN }}
-          kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "ghcr-auth"}]}'
+          echo "IMAGE_NAME=ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]' >> $GITHUB_ENV
 
       - name: Deploy Postgres in cluster
         run: |
           kubectl apply -f k8s/postgres.yaml
           kubectl rollout status deployment/postgres --timeout=90s
 
+      - name: Create or update Secret safely
+        run: |
+          DB_PASS="${{ secrets.DB_PASSWORD || 'postgrespassword' }}"
+          kubectl create secret generic toxic-secret \
+            --from-literal=DATABASE_URL="postgresql://postgres:${DB_PASS}@postgres:5432/toxic_db" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Prepare manifests with dynamic values
         run: |
-          sed -i "s|IMAGE_PLACEHOLDER|${{ env.IMAGE_NAME }}:${{ github.sha }}|g" k8s/deployment.yaml
-          DB_PASS="${{ secrets.DB_PASSWORD || 'postgrespassword' }}"
-          sed -i "s|postgres:postgres|postgres:${DB_PASS}|g" k8s/secret.yaml
+          sed -i "s|image: toxic-service:latest|image: ${{ env.IMAGE_NAME }}:${{ github.sha }}|g" k8s/deployment.yaml
 
       - name: Apply Kubernetes manifests
         run: |
           kubectl apply -f k8s/configmap.yaml
-          kubectl apply -f k8s/secret.yaml
           kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
           kubectl apply -f k8s/deployment.yaml
 
       - name: Wait for deployment rollout
         run: |
           kubectl rollout status deployment/toxic-service --timeout=120s
 
-      - name: Run Smoke Test with semantic assertion and DB check
+      - name: Run Smoke Test via Ingress
         run: |
-          kubectl port-forward svc/toxic-service 8080:8000 &
-          sleep 4
+          sleep 5
+          # Определяем IP-адрес узла control-plane в сети kind
+          CONTROL_PLANE_IP=$(getent hosts mlpro-cluster-control-plane | awk '{print $1}')
+          echo "Connecting to Traefik Ingress at $CONTROL_PLANE_IP..."
 
-          echo "Checking /health endpoint"
-          curl --fail -s http://localhost:8080/health \
-            | python3 -c "import json, sys; r = json.load(sys.stdin); assert r['status'] == 'ok' and 'model_path' in r, r; print('Health check PASSED:', r)"
+          echo "1. Checking /health (model version from registry)"
+          HEALTH_RESP=$(curl --fail -s -H "Host: toxic.localhost" http://$CONTROL_PLANE_IP/health)
+          echo "Health response: $HEALTH_RESP"
+          python3 -c "import json; r = json.loads('$HEALTH_RESP'); assert r['status'] == 'ok' and r['model_version'] != 'local', r; print('Health check PASSED!')"
 
+          echo "2. Checking /v1/predict with semantic assertion"
           cat << 'EOF' > good.json
-          {"comment_text": "This is a comment"}
+          {"comment_text": "This is a great and helpful neutral comment"}
           EOF
 
-          echo "Checking /v1/predict..."
-          PRED_RESP=$(curl --fail -s -X POST http://localhost:8080/v1/predict \
+          PRED_RESP=$(curl --fail -s -X POST http://$CONTROL_PLANE_IP/v1/predict \
+            -H "Host: toxic.localhost" \
             -H "Content-Type: application/json" \
             -d @good.json)
-          echo "Response: $PRED_RESP"
-          REQ_ID=$(echo "$PRED_RESP" | python3 -c "import json, sys; r = json.load(sys.stdin); assert 0.0 <= r['probability'] <= 1.0; print(r['request_id'])")
+          echo "Predict response: $PRED_RESP"
+          
+          REQ_ID=$(python3 -c "import json; r = json.loads('$PRED_RESP'); assert 0.0 <= r['probability'] <= 1.0; print(r['request_id'])")
 
           sleep 2
-          echo "Checking row in Postgres table for request_id $REQ_ID..."
+          echo "3. Verifying record in Postgres logs table for request_id $REQ_ID..."
           kubectl exec deploy/postgres -- psql -U postgres -d toxic_db -c \
             "SELECT request_id, status_code, latency_ms, prediction FROM prediction_logs WHERE request_id = '$REQ_ID';" \
             | grep "$REQ_ID"
-          echo "Smoke & DB check PASSED successfully!"
+          echo "Smoke test PASSED on all 3 conditions!"
 
       - name: Rich diagnostics on failure
         if: failure()
         run: |
-          echo  "KUBECTL GET ALL"
+          echo "KUBECTL GET ALL"
           kubectl get all -o wide || true
-          echo  "DESCRIBE PODS"
+          echo "DESCRIBE PODS"
           kubectl describe pods || true
           echo "CONTAINER LOGS"
           kubectl logs -l app=toxic-service --all-containers --tail=100 || true
