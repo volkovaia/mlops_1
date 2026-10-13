@@ -7,10 +7,7 @@ class ToxicModelUser(HttpUser):
     @task(5)
     def predict_endpoint(self):
         payload = {
-            "comment_text": "You are doing a fantastic job with Wikipedia moderation!",
-            "caps_ratio": 0.05,
-            "exclaim_count": 1,
-            "bad_word_count": 0,
+            "comment_text": "This is a neutral and constructive Wikipedia discussion comment",
         }
         self.client.post("/v1/predict", json=payload)
 
