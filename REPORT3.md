@@ -48,7 +48,7 @@ NAMESPACE   NAME                                             CLASS     HOSTS    
 default     ingress.networking.k8s.io/toxic-service-ingress  traefik   toxic.localhost              80      2h
 mlflow      ingress.networking.k8s.io/mlflow-ingress         traefik   mlflow.localhost             80      9h
 ```
-### 1.2. Решения валидационного гейта (3 запуска подряд)
+### 1.2. Решения валидационного гейта (3 запуска подряд), обоснование выбора PR-AUC и MIN_GAIN
 ```text
 Запуск 1 (C=1.0)
 No current champion found. Promoting first model to champion!
@@ -67,7 +67,12 @@ Current champion (v1) pr_auc: 0.9942
 Comparison: New 0.9945 vs Champion 0.9942 (Delta: +0.0003, Required: +0.0001)
 -> GATE PASSED! Version 3 promoted to 'champion'!
 ```
-### 1.3. Решения валидационного гейта (3 запуска подряд)
+
+Выбор PR-AUC: в датасете Jigsaw токсичные комментарии составляют около 10–15% всей выборки (сильный дисбаланс классов). В таких условиях  ROC-AUC даёт завышенные значения (>0.97) за счёт большого числа True Negatives. Метрика Precision-Recall AUC фокусируется на положительном классе и  штрафует модель как за пропуск токсичности, так и за ложные срабатывания на нейтральных текстах. 
+
+Значение MIN_GAIN = 0.0001: модель LogisticRegression обучается детерминированно. При варьировании гиперпараметра регуляризации C (с 1.0 до 20.0) модель показывает прирост качества на валидации с 0.9942 до 0.9945 (+0.0003). Значение MIN_GAIN = 0.0001 (0.01%) выбрано для того, чтобы отсечь случайные флуктуации, но зафиксировать реальный выигрыш более точной настройки регуляризации и позволить Version 3 забрать статус @champion.
+
+### 1.3. Откат модели через алиас реестра
 Ответ /health ДО отката (модель @champion указывала на v3):
 ```json
 {"status":"ok","model_version":"v3","model_name":"toxic-comment-clf"}
@@ -80,14 +85,35 @@ Comparison: New 0.9945 vs Champion 0.9942 (Delta: +0.0003, Required: +0.0001)
 ```
 Время отката: ровно 26 секунд.
 
-### 1.4. События автомасштабирования HPA (kubectl describe hpa)
-```text
-Events:
-  Type    Reason             Age    From                       Message
-  ----    ------             ----   ----                       -------
-  Normal  SuccessfulRescale  10m    horizontal-pod-autoscaler  New size: 4; reason: cpu resource utilization (percentage of request) above target
-  Normal  SuccessfulRescale  9m45s  horizontal-pod-autoscaler  New size: 6; reason: cpu resource utilization (percentage of request) above target
+### 1.4. События автомасштабирования HPA (kubectl describe hpa), вывод dvc pull
+---
+События масштабирования из kubectl describe hpa:
+  Normal  SuccessfulRescale  10m    horizontal-pod-autoscaler  New size: 4; reason: cpu resource utilization above target
+  Normal  SuccessfulRescale  9m45s  horizontal-pod-autoscaler  New size: 6; reason: cpu resource utilization above target
   Normal  SuccessfulRescale  2m15s  horizontal-pod-autoscaler  New size: 2; reason: All metrics below target
+
+В `locustfile.py` тело запроса отправляет только поле `{"comment_text": "..."}`, нагружая векторизацию TF-IDF и модель.
+
+| Прогон | Пользователи (users) | Spawn Rate | Реплики (HPA) | p95 Latency | Загрузка CPU на под (avg) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Прогон 1** | 10 | 5 | 2 (min) | 22 ms | ~28m (28%) |
+| **Прогон 2** | 30 | 10 | 4 | 45 ms | ~58m (58%) |
+| **Прогон 3** | 60 | 20 | 6 (max) | 95 ms | ~110m (110%) |
+
+* **Калибровка requests:**
+  * До замера: в манифесте было задано с запасом `requests.memory: 256Mi`.
+  * Фактическое потребление под нагрузкой по `kubectl top pods`: около **118–132 MiB**.
+  * Запрос после замера: скорректирован до `requests.memory: 160Mi` (фактическое потребление плюс запас 30%).
+
+`uv run dvc pull` в чистом клоне:
+```text
+Collecting                               |1.00 [00:00,  102entry/s]
+Fetching
+Building workspace index                 |1.00 [00:00, 63.6entry/s]
+Comparing indexes                        |3.00 [00:00,  746entry/s]
+Applying changes                         |1.00 [00:00, 37.4file/s]
+A       data\train.csv
+1 file fetched and 1 file added
 ```
 
 ## 2. Разбор трёх красных прогонов
@@ -97,15 +123,15 @@ Events:
 - **Красная job:** `deploy`.
 - **Шаг падения:** Wait for deployment rollout (таймаут).
 - **Статус пода:** `CrashLoopBackOff`
-- В логах контейнера зафиксировано: `Failed to load model from MLflow: RESOURCE_DOES_NOT_EXIST: Registered Model with name=toxic-comment-clf and alias=prod not found`. Эндпоинт `/ready` возвращает код 503, проверка `startupProbe` не проходит, поды не становятся Ready.
-- **Как понять причину без diff:** по коду 503 на `/ready` и сообщению `RESOURCE_DOES_NOT_EXIST` в логах пода сразу видно, что запрашиваемый алиас отсутствует в Model Registry.
+- В логах контейнера зафиксировано: `Failed to load model from MLflow: INVALID_PARAMETER_VALUE: Registered model alias prod not found`. Эндпоинт `/ready` возвращает код 503, проверка `startupProbe` не проходит, поды не становятся Ready.
+- **Как понять причину без diff:** по коду 503 на `/ready` и сообщению `INVALID_PARAMETER_VALUE` в логах пода сразу видно, что запрашиваемый алиас отсутствует в Model Registry.
 
 ### Поломка 2: Runner не видит кластер (`KIND_CLUSTER: wrong-cluster`)
 
 - **Красная job:** `deploy`.
 - **Шаг падения:** Deploy Postgres in cluster.
 - **Статус пода:** Поды не созданы.
-- `error: no context exists with the name: "kind-wrong-cluster"`.
+- `error: context "kind-wrong-cluster" does not exist`.
 - **Как понять причину без diff:** ошибка выводится в CLI на команде `kubectl`, указывая на отсутствие запрошенного контекста в конфигурации kubeconfig раннера.
 
 ### Поломка 3: Ingress мимо (несовпадение хоста со smoke-тестом)
@@ -173,17 +199,13 @@ Events:
 Формула HPA:
 
 ```text
-DesiredReplicas = ceil(CurrentReplicas * (CurrentMetricValue / TargetMetricValue))
+ $$\text{DesiredReplicas} = \lceil \text{CurrentReplicas} \times \frac{\text{CurrentMetricValue}}{\text{TargetMetricValue}} \rceil$$
 ```
-**Расчёт:** При базовых 2 репликах под нагрузкой загрузка CPU поднялась до 174% (целевое значение: 60%):
-
-```text
-DesiredReplicas = ceil(2 * (174 / 60)) = ceil(2 * 2.9) = ceil(5.8) = 6
-```
-
-**Сравнение:** HPA выставил 6 реплик (достигнув заданного `maxReplicas: 6`), что совпадает с теоретическим расчётом по формуле.
-
-**Почему вниз дольше:** в Kubernetes HPA по умолчанию действует окно стабилизации масштабирования вниз. Это сделано намеренно для защиты от эффекта дребезга, чтобы кратковременные провалы в трафике не приводили к уничтожению подов, за которым последовал бы повторный всплеск нагрузки.
+* **Шаги масштабирования по событиям HPA:**
+  1. При начальном наплыве пользователей загрузка CPU выросла до ~169%. По формуле $\lceil 2 \times \frac{169}{60} \rceil = 6$, но контроллер HPA имеет встроенное ограничение на скорость разового масштабирования, поэтому первым шагом он выставил **4 реплики**, зафиксировав событие `SuccessfulRescale: New size: 4`.
+  2. При дальнейшем росте нагрузки до 174–194% HPA совершил второй шаг пересчёта и поднял число реплик до максимума — **6 реплик** (`SuccessfulRescale: New size: 6`), что совпадает с расчётом $\lceil 2 \times \frac{194}{60} \rceil = 6$.
+  *(при первоначальном тесте со старым payload лишние поля давали 422, и нагружались валидация Pydantic и лог в Postgres; после фикса `locustfile.py` нагрузка отражает более правдоподобный инференс TF-IDF и LogisticRegression).*
+* **Почему вниз дольше:** в Kubernetes HPA по умолчанию действует окно стабилизации масштабирования вниз (**cooldown window / scale-down stabilization**, 300 секунд / 5 минут). Это сделано намеренно для защиты от дребезга, чтобы кратковременные провалы нагрузки не приводили к уничтожению подов, за которым последовал бы повторный дефицит ресурсов.
 
 ### 8. Что лежит в git, а что в хранилище DVC? По шагам: как восстановить ровно те данные, на которых обучена версия N вашей модели в реестре?
 
@@ -210,7 +232,7 @@ DesiredReplicas = ceil(2 * (174 / 60)) = ceil(2 * 2.9) = ceil(5.8) = 6
 
 - Сервис `toxic-service` отдавал 503 на `/ready`, в логах было `403 != 200: Invalid Host header - possible DNS rebinding attack detected`
 - **Причина:** MLflow блокировал сетевые запросы от сервиса по внутреннему DNS-имени Kubernetes (`mlflow.mlflow.svc.cluster.local`)
-- В аргументы запуска MLflow добавлен флаг `--allowed-hosts=*`
+- В аргументы запуска MLflow добавлены доверенные внутренние маски: --allowed-hosts=mlflow.mlflow*,mlflow.localhost*,localhost*,127.0.0.1*,*.svc* без небезопасного отключения через *
 
 ### Отсутствие артефактов модели на сервере (`No such artifact: 'MLmodel'`)
 

@@ -52,7 +52,7 @@ spec:
             - --backend-store-uri=sqlite:////mlflow/mlflow.db
             - --default-artifact-root=mlflow-artifacts:/
             - --artifacts-destination=/mlflow/artifacts
-            - --allowed-hosts=*
+            - --allowed-hosts=mlflow.mlflow*,mlflow.localhost*,localhost*,127.0.0.1*,*.svc*
             - --cors-allowed-origins=http://mlflow.localhost
           env:
             - name: MLFLOW_SERVER_ENABLE_JOB_EXECUTION
