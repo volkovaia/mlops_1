@@ -1,9 +1,10 @@
+import os
 import sys
+
+import mlflow
 import pandas as pd
 import pandera as pa
-from pandera import Column, Check, DataFrameSchema
-import mlflow
-import os
+from pandera import Check, Column, DataFrameSchema
 
 # Схема для строк
 row_schema = DataFrameSchema({
