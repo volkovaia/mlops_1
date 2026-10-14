@@ -1,7 +1,7 @@
 import json
 import os
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
@@ -38,7 +38,7 @@ with DAG(
     default_args=default_args,
     description="Validation, training with gate and rollout",
     schedule=None,
-    start_date=datetime(2026, 1, 1),
+    start_date=datetime(2026, 1, 1, tzinfo=UTC),
     catchup=False,
     tags=["mlops", "toxic-service"],
 ) as dag:
@@ -51,8 +51,7 @@ with DAG(
         image_pull_policy="Never",
         cmds=["/bin/sh", "-c"],
         arguments=[
-            "uv run dvc pull -r cluster data/train.csv.dvc && python -m"
-            " toxic_service.data data/train.csv"
+            "uv run dvc pull -r cluster data/train.csv.dvc && python -m toxic_service.data data/train.csv"
         ],
         env_vars=s3_env,
         get_logs=True,

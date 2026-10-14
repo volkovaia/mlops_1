@@ -1,7 +1,7 @@
-import sys
-import time
 import random
 import statistics
+import time
+
 import requests
 
 URL = "http://toxic.localhost/v1/predict"
@@ -36,7 +36,7 @@ def main():
             try:
                 resp = requests.post(URL, json=payload, timeout=2.0)
                 code = resp.status_code
-            except Exception as e:
+            except Exception:
                 code = "ERR"
 
             lat_ms = (time.perf_counter() - req_start) * 1000
