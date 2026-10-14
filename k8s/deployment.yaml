@@ -19,7 +19,12 @@ spec:
           image: toxic-service:latest
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8000
+            - name: http
+              containerPort: 8000
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           envFrom:
             - configMapRef:
                 name: toxic-config
@@ -28,7 +33,7 @@ spec:
           resources:
             requests:
               cpu: "100m"
-              memory: "100Mi"
+              memory: "160Mi"
             limits:
               cpu: "500m"
               memory: "384Mi"

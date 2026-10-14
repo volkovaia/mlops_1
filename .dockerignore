@@ -1,0 +1,4 @@
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+data/train.csv

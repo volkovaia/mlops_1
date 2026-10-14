@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: toxic-service-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  toxic-service-dashboard.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "title": "Requests Per Second (RPS)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(http_requests_total{app=\"toxic-service\"}[1m])) or sum(rate(http_request_duration_seconds_count{app=\"toxic-service\"}[1m]))",
+              "legendFormat": "RPS",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "title": "Latency p50 and p95",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{app=\"toxic-service\"}[1m])) by (le)) * 1000",
+              "legendFormat": "p95 (ms)",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{app=\"toxic-service\"}[1m])) by (le)) * 1000",
+              "legendFormat": "p50 (ms)",
+              "refId": "B"
+            }
+          ]
+        },
+        {
+          "title": "Toxicity Score Distribution",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(toxic_prediction_score_bucket[1m])) by (le)",
+              "legendFormat": "le <= {{le}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "title": "Active Model Version in Pods",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "max(toxic_model_info) by (model_version, model_alias)",
+              "legendFormat": "{{model_version}} ({{model_alias}})",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            },
+            "textMode": "auto"
+          }
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 38,
+      "style": "dark",
+      "tags": ["mlops", "toxic-service"],
+      "time": { "from": "now-15m", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Toxic Service Overview",
+      "uid": "toxic-service-overview",
+      "version": 1
+    }
